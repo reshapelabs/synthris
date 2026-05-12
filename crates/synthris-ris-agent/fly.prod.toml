@@ -21,6 +21,10 @@ RISHW_VERSION = '3.5b'
 [processes]
 worker = '/app/synthris-ris-agent'
 
+[[restart]]
+policy = 'always'
+processes = ['worker']
+
 [[vm]]
 memory = '1gb'
 cpu_kind = 'shared'
