@@ -1,0 +1,10 @@
+[package]
+name = "synthris-plate-assets"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+image.workspace = true
+synthris-core = { path = "../synthris-core" }

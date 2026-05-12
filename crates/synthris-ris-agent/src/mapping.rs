@@ -1,7 +1,7 @@
-use anyhow::{Result, anyhow, bail};
+use anyhow::{Result, anyhow};
 use synthris_core::{
-    BackgroundMode, CfuSpec, LookPreset, OpacityClass, PhasePreset, SimulationRequest,
-    TemperatureSpec, TimeSpec,
+    BackgroundMode, CfuSpec, LookPreset, OpacityClass, PhasePreset, SimulationRequest, TemperatureSpec,
+    TimeSpec,
 };
 use uuid::Uuid;
 
@@ -37,27 +37,6 @@ pub fn map_preset_to_illumination(preset_id: Uuid) -> Result<IlluminationSelecti
     }
 }
 
-pub fn resolve_plate_profile_id(
-    plate_type_id: &str,
-    illum: IlluminationSelection,
-) -> Result<String> {
-    let p = if plate_type_id.eq_ignore_ascii_case("Petri Dish") {
-        match illum {
-            IlluminationSelection::Frontlit => "petridish-top-1",
-            IlluminationSelection::Backlit => "petridish-bottom-1",
-        }
-    } else if plate_type_id.eq_ignore_ascii_case("OmniTray") {
-        match illum {
-            IlluminationSelection::Frontlit => "omnitray-top-1",
-            IlluminationSelection::Backlit => "omnitray-bottom-1",
-        }
-    } else {
-        bail!("unknown plate type id: {plate_type_id}");
-    };
-
-    Ok(p.to_string())
-}
-
 pub fn resolve_job_params(job: &RisJob, config: &AgentConfig) -> Result<JobResolvedParams> {
     let overrides = parse_job_name_overrides(job.name.as_deref().unwrap_or(""))?;
 
@@ -83,7 +62,6 @@ pub fn resolve_job_params(job: &RisJob, config: &AgentConfig) -> Result<JobResol
 pub fn build_simulation_request(
     organism_id: &str,
     illumination_id: &str,
-    plate_profile_id: &str,
     params: &JobResolvedParams,
     time: TimeSpec,
     seed: u64,
@@ -94,7 +72,6 @@ pub fn build_simulation_request(
     SimulationRequest {
         organism_id: organism_id.to_string(),
         illumination_id: illumination_id.to_string(),
-        plate_profile_id: Some(plate_profile_id.to_string()),
         background_mode: BackgroundMode::PlateImage,
         cfu: params.cfu.clone(),
         time,

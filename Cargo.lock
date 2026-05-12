@@ -2235,6 +2235,7 @@ dependencies = [
  "serde",
  "serde_json",
  "synthris-core",
+ "synthris-plate-assets",
  "tokio",
  "toml",
  "tracing",
@@ -2255,6 +2256,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "synthris-plate-assets"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "image",
+ "synthris-core",
+]
+
+[[package]]
 name = "synthris-ris-agent"
 version = "0.1.0"
 dependencies = [
@@ -2265,6 +2275,7 @@ dependencies = [
  "serde",
  "serde_json",
  "synthris-core",
+ "synthris-plate-assets",
  "tokio",
  "tracing",
  "tracing-subscriber",

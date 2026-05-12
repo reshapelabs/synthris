@@ -6,7 +6,6 @@ use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 
 use crate::request::IlluminationMode;
-use crate::roi::Roi;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TemperatureCardinalProfile {
@@ -209,24 +208,6 @@ pub struct IlluminationProfile {
     pub optics_model: OpticsModelSpec,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PlateProfile {
-    pub id: String,
-    pub image_path: Option<PathBuf>,
-    pub roi: Roi,
-    pub notes: Option<String>,
-}
-
-impl PlateProfile {
-    pub fn validate(&self) -> Result<()> {
-        if self.id.trim().is_empty() {
-            bail!("plate profile id must not be empty");
-        }
-        self.roi.validate()?;
-        Ok(())
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct ProfileDbConfig {
     pub search_paths: Vec<PathBuf>,
@@ -244,7 +225,6 @@ impl Default for ProfileDbConfig {
 pub struct ProfileDb {
     pub organisms: HashMap<String, OrganismProfile>,
     pub illuminations: HashMap<String, IlluminationProfile>,
-    pub plates: HashMap<String, PlateProfile>,
 }
 
 impl ProfileDb {
@@ -262,14 +242,8 @@ impl ProfileDb {
             load_directory_profiles(root.join("illumination"), |p: IlluminationProfile| {
                 db.illuminations.insert(p.id.clone(), p)
             })?;
-            load_directory_profiles(root.join("plates"), |p: PlateProfile| {
-                db.plates.insert(p.id.clone(), p)
-            })?;
         }
 
-        for p in db.plates.values() {
-            p.validate()?;
-        }
         for o in db.organisms.values() {
             validate_organism(o)?;
         }
@@ -287,9 +261,6 @@ impl ProfileDb {
         self.illuminations.get(id)
     }
 
-    pub fn plate(&self, id: &str) -> Option<&PlateProfile> {
-        self.plates.get(id)
-    }
 }
 
 fn validate_organism(organism: &OrganismProfile) -> Result<()> {
