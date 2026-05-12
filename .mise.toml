@@ -1,3 +1,4 @@
 [tools]
 rust = "1.95"
 flyctl = "latest"
+"cargo:wasm-pack" = "latest"

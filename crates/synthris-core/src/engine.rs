@@ -12,8 +12,12 @@ mod trace_metrics;
 use anyhow::{Result, bail};
 use image::RgbImage;
 use serde::Serialize;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use tracing::{debug, info_span};
+#[cfg(target_arch = "wasm32")]
+use web_time::Instant;
+#[cfg(not(target_arch = "wasm32"))]
+use std::time::Instant;
 
 use crate::profiles::ProfileDb;
 use crate::request::{

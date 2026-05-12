@@ -1,0 +1,19 @@
+{
+  "name": "web",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build:wasm": "./scripts/build-wasm.sh",
+    "dev": "vite",
+    "build": "bun run build:wasm && vite build",
+    "preview": "vite preview",
+    "test": "bun test"
+  },
+  "devDependencies": {
+    "@ffmpeg/ffmpeg": "^0.12.15",
+    "@ffmpeg/util": "^0.12.2",
+    "@types/bun": "latest",
+    "typescript": "^6.0.3",
+    "vite": "^8.0.10"
+  }
+}
