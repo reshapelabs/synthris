@@ -210,12 +210,14 @@ pub struct IlluminationProfile {
 
 #[derive(Debug, Clone)]
 pub struct ProfileDbConfig {
+    pub include_builtin: bool,
     pub search_paths: Vec<PathBuf>,
 }
 
 impl Default for ProfileDbConfig {
     fn default() -> Self {
         Self {
+            include_builtin: true,
             search_paths: vec![PathBuf::from("profiles")],
         }
     }
@@ -229,7 +231,11 @@ pub struct ProfileDb {
 
 impl ProfileDb {
     pub fn load(config: &ProfileDbConfig) -> Result<Self> {
-        let mut db = Self::default();
+        let mut db = if config.include_builtin {
+            Self::builtin()?
+        } else {
+            Self::default()
+        };
 
         for root in &config.search_paths {
             if !root.exists() {
@@ -250,6 +256,41 @@ impl ProfileDb {
         for i in db.illuminations.values() {
             validate_illumination(i)?;
         }
+        Ok(db)
+    }
+
+    pub fn builtin() -> Result<Self> {
+        let mut db = Self::default();
+
+        const ORGANISMS: &[&str] = &[
+            include_str!("../../../profiles/organisms/morrow.toml"),
+            include_str!("../../../profiles/organisms/quill.toml"),
+            include_str!("../../../profiles/organisms/solen.toml"),
+            include_str!("../../../profiles/organisms/zenth.toml"),
+        ];
+        const ILLUMINATIONS: &[&str] = &[
+            include_str!("../../../profiles/illumination/frontlit.toml"),
+            include_str!("../../../profiles/illumination/backlit.toml"),
+        ];
+
+        for raw in ORGANISMS {
+            let p: OrganismProfile =
+                toml::from_str(raw).context("invalid built-in organism profile")?;
+            db.organisms.insert(p.id.clone(), p);
+        }
+        for raw in ILLUMINATIONS {
+            let p: IlluminationProfile =
+                toml::from_str(raw).context("invalid built-in illumination profile")?;
+            db.illuminations.insert(p.id.clone(), p);
+        }
+
+        for o in db.organisms.values() {
+            validate_organism(o)?;
+        }
+        for i in db.illuminations.values() {
+            validate_illumination(i)?;
+        }
+
         Ok(db)
     }
 
@@ -724,6 +765,13 @@ mod tests {
     #[test]
     fn minimal_db_contains_expected_profiles() {
         let db = minimal_db();
+        assert!(db.organism("morrow").is_some());
+        assert!(db.illumination("backlit").is_some());
+    }
+
+    #[test]
+    fn builtin_profiles_load() {
+        let db = ProfileDb::builtin().expect("builtin profiles");
         assert!(db.organism("morrow").is_some());
         assert!(db.illumination("backlit").is_some());
     }
