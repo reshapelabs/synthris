@@ -9,12 +9,12 @@ beta = 1.6
 
 [growth_model]
 type = "gompertz_radius_v2"
-mu_max_ref_h = 0.17
+mu_max_ref_h = 0.115
 lag_ref_h = 0.85
 n0_log10 = 2.8
 nmax_log10 = 6.25
 r0_px = 4.2
-rmax_ref_px = 310.0
+rmax_ref_px = 31.5
 phase_early_scale = 6.2
 phase_mid_scale = 0.87
 phase_late_scale = 1.42
@@ -41,9 +41,9 @@ morphology_jitter = 0.25
 temp_opt_jitter_sigma_c = 1.0
 
 [seeding_model.onset]
-mean_min = 2160.0
-sigma = 1.0
-max_h = 216.0
+mean_min = 9.0
+sigma = 0.48
+max_h = 168.0
 
 [geometry_model]
 type = "radial_dome_v2"
