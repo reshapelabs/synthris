@@ -1,0 +1,26 @@
+# Python/cache artifacts
+**/__pycache__
+**/*.py[oc]
+**/.venv
+.venv
+.pytest_cache
+.ruff_cache
+
+# Environment files
+**/.env
+**/.env.*
+
+# Local/editor noise
+.idea
+.vscode
+*.swp
+*.swo
+
+# Build/artifact noise
+target
+.git
+.github
+fly.toml
+
+# Local playground output
+src/synthris/playground/**/output/*

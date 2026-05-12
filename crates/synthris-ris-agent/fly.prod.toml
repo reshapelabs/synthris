@@ -1,0 +1,28 @@
+# fly.toml app configuration file generated for synthris-agent on 2025-05-28T21:59:45+02:00
+#
+# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
+#
+
+app = 'reshape-synthris-agent-prod'
+primary_region = 'arn'
+
+[build]
+
+[deploy]
+strategy = 'immediate'
+
+[env]
+DEFAULT_SCALE_FACTOR = '0.25'
+POLL_INTERVAL_SECONDS = '2'
+RIS_API_BASE_URL = 'https://ris-api.reshapebiotech.com'
+RISFW_VERSION = '1.33.7'
+RISHW_VERSION = '3.5b'
+
+[processes]
+worker = '/app/synthris-ris-agent'
+
+[[vm]]
+memory = '1gb'
+cpu_kind = 'shared'
+cpus = 1
+processes = ['worker']

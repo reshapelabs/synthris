@@ -1,0 +1,75 @@
+id = "solen"
+
+[temperature_cardinal]
+t_min_c = 2.0
+t_opt_c = 30.0
+t_max_c = 45.0
+alpha = 1.25
+beta = 1.6
+
+[growth_model]
+type = "gompertz_radius_v2"
+mu_max_ref_h = 0.112
+lag_ref_h = 0.95
+n0_log10 = 2.8
+nmax_log10 = 6.3
+r0_px = 4.2
+rmax_ref_px = 32.0
+phase_early_scale = 6.1
+phase_mid_scale = 0.86
+phase_late_scale = 1.45
+rmax_temp_floor = 0.6
+
+[optical_material]
+kappa_ref = 1.2
+thickness_exp = 1.3
+translucency = 0.98
+pigment_rgb = [205, 172, 118]
+pigment_strength = 0.52
+
+[seeding_model]
+type = "poisson_disc_delay_v1"
+min_dist_factor = 0.9
+min_dist_floor_px = 8.0
+attempts_per_colony = 600
+kappa_jitter_low = 0.9
+kappa_jitter_high = 1.1
+opacity_scale_translucent = 0.8
+opacity_scale_standard = 1.0
+opacity_scale_dense = 1.3
+morphology_jitter = 0.25
+temp_opt_jitter_sigma_c = 1.0
+
+[seeding_model.onset]
+mean_min = 11.0
+sigma = 0.52
+max_h = 156.0
+
+[geometry_model]
+type = "anisotropic_blob_v1"
+edge_hardness = 1.55
+thickness_power = 1.45
+anisotropy = 0.08
+angular_wobble = 0.03
+wobble_frequency = 3
+
+[[phenotypes]]
+id = "smooth_round"
+weight = 0.45
+edge_roughness = 0.07
+spread_bias = 0.95
+core_density = 1.18
+
+[[phenotypes]]
+id = "rough_irregular"
+weight = 0.45
+edge_roughness = 0.28
+spread_bias = 0.92
+core_density = 1.12
+
+[[phenotypes]]
+id = "mucoid_spread"
+weight = 0.10
+edge_roughness = 0.1
+spread_bias = 1.0
+core_density = 0.95

@@ -1,0 +1,9 @@
+id = "petri-default"
+image_path = "src/synthris/data/top/Petri Dish-1.jpeg"
+notes = "Starter profile"
+
+[roi]
+kind = "circle"
+x = 1750
+y = 1750
+radius = 1264

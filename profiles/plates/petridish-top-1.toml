@@ -1,0 +1,9 @@
+id = "petridish-top-1"
+image_path = "src/synthris/data/top/Petri Dish-1.jpeg"
+notes = "Migrated from legacy plate-profiles"
+
+[roi]
+kind = "circle"
+x = 1750
+y = 1750
+radius = 1264

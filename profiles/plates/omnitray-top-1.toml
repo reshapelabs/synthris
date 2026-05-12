@@ -1,0 +1,10 @@
+id = "omnitray-top-1"
+image_path = "src/synthris/data/top/OmniTray-1.jpeg"
+notes = "Migrated from legacy plate-profiles"
+
+[roi]
+kind = "rect"
+x = 582
+y = 444
+width = 2170
+height = 3426

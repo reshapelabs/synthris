@@ -1,0 +1,18 @@
+[package]
+name = "synthris-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = []
+turbojpeg = ["dep:turbojpeg"]
+
+[dependencies]
+anyhow.workspace = true
+image.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+tracing.workspace = true
+turbojpeg = { workspace = true, optional = true }

@@ -1,0 +1,33 @@
+id = "backlit"
+mode = "backlit"
+background_rgb = [226, 216, 201]
+colony_rgb = [212, 195, 166]
+backlit_absorbance = 0.9
+frontlit_contrast = 1.0
+
+[optics_model]
+type = "attenuation_blend_v2"
+
+[optics_model.backlit]
+min_absorbance = 0.08
+attenuation_edge_base = 0.26
+attenuation_edge_gain = 0.18
+tint_strength = 0.2
+translucency_min = 0.58
+translucency_max = 1.12
+
+[optics_model.frontlit]
+min_contrast = 0.2
+target_edge_base = 0.7
+target_edge_gain = 0.3
+blend_alpha = 0.68
+
+[optics_model.look]
+clean = 0.9
+realistic = 1.0
+gritty = 1.15
+
+[optics_model.opacity]
+translucent = 0.8
+standard = 1.0
+dense = 1.3

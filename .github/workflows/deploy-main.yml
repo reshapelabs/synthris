@@ -1,0 +1,48 @@
+name: Deploy Main
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy_staging:
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup mise
+        uses: jdx/mise-action@v2
+
+      - name: Install tools
+        run: mise install
+
+      - name: Deploy staging
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          test -n "${{ secrets.FLY_API_TOKEN }}" || { echo "Missing staging FLY_API_TOKEN secret"; exit 1; }
+          flyctl --access-token "${{ secrets.FLY_API_TOKEN }}" deploy . -c crates/synthris-ris-agent/fly.staging.toml --dockerfile crates/synthris-ris-agent/Dockerfile --remote-only
+
+  deploy_prod:
+    runs-on: ubuntu-latest
+    needs: deploy_staging
+    environment: production
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup mise
+        uses: jdx/mise-action@v2
+
+      - name: Install tools
+        run: mise install
+
+      - name: Deploy production
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          test -n "${{ secrets.FLY_API_TOKEN }}" || { echo "Missing production FLY_API_TOKEN secret"; exit 1; }
+          flyctl --access-token "${{ secrets.FLY_API_TOKEN }}" deploy . -c crates/synthris-ris-agent/fly.prod.toml --dockerfile crates/synthris-ris-agent/Dockerfile --remote-only

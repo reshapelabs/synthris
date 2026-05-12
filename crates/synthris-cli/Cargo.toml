@@ -1,0 +1,18 @@
+[package]
+name = "synthris-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+image.workspace = true
+pprof.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+tokio.workspace = true
+synthris-core = { path = "../synthris-core" }
+tracing.workspace = true
+tracing-subscriber.workspace = true
