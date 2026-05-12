@@ -263,14 +263,14 @@ impl ProfileDb {
         let mut db = Self::default();
 
         const ORGANISMS: &[&str] = &[
-            include_str!("../../../profiles/organisms/morrow.toml"),
-            include_str!("../../../profiles/organisms/quill.toml"),
-            include_str!("../../../profiles/organisms/solen.toml"),
-            include_str!("../../../profiles/organisms/zenth.toml"),
+            include_str!("../profiles/organisms/morrow.toml"),
+            include_str!("../profiles/organisms/quill.toml"),
+            include_str!("../profiles/organisms/solen.toml"),
+            include_str!("../profiles/organisms/zenth.toml"),
         ];
         const ILLUMINATIONS: &[&str] = &[
-            include_str!("../../../profiles/illumination/frontlit.toml"),
-            include_str!("../../../profiles/illumination/backlit.toml"),
+            include_str!("../profiles/illumination/frontlit.toml"),
+            include_str!("../profiles/illumination/backlit.toml"),
         ];
 
         for raw in ORGANISMS {

@@ -843,11 +843,13 @@ fn load_profile_db(profile_dirs: &[PathBuf]) -> Result<ProfileDb> {
     let db = load_profile_db_any(profile_dirs)?;
     if db.organisms.is_empty() {
         bail!(
-            "no organism profiles found; add profiles/organisms/*.(toml|json) or pass --profile-dir"
+            "no organism profiles found; defaults should come from crates/synthris-core/profiles/organisms or pass --profile-dir"
         );
     }
     if db.illuminations.is_empty() {
-        bail!("no illumination profiles found; add profiles/illumination/*.(toml|json)");
+        bail!(
+            "no illumination profiles found; defaults should come from crates/synthris-core/profiles/illumination or pass --profile-dir"
+        );
     }
 
     Ok(db)
