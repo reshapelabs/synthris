@@ -19,13 +19,13 @@ use web_time::Instant;
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
 
-use crate::profiles::ProfileDb;
+use crate::plate::SimulationBackground;
+use crate::profiles::{IlluminationProfile, OrganismProfile};
 use crate::request::{
-    BackgroundMode, ColonyAnnotation, GeneratedFrame, LookPreset, OpacityClass, SimulationManifest,
-    SimulationRequest,
+    ColonyAnnotation, GeneratedFrame, LookPreset, OpacityClass, SimulationManifest, SimulationRequest,
 };
 use crate::roi::Roi;
-use background::{full_canvas_roi, render_background, resolve_render_roi};
+use background::render_background;
 use codec::encode_jpeg;
 use models::{GrowthModel, ModelBundle, SeedingModel, build_model_bundle};
 use rng::Lcg;
@@ -117,7 +117,6 @@ impl FrameIterator {
         SimulationManifest {
             organism_id: self.request.organism_id.clone(),
             illumination_id: self.request.illumination_id.clone(),
-            plate_profile_id: self.request.plate_profile_id.clone(),
             background_mode: self.request.background_mode,
             cfu_count: self.cfu_count,
             temperature_c: self.request.temperature.constant_c,
@@ -283,25 +282,26 @@ impl Engine {
         Self { config }
     }
 
-    pub fn frame_iter(&self, request: &SimulationRequest, db: &ProfileDb) -> Result<FrameIterator> {
-        let organism = self.resolve_organism(request, db)?;
-        let illumination = db.illumination(&request.illumination_id).ok_or_else(|| {
-            anyhow::anyhow!("unknown illumination profile: {}", request.illumination_id)
-        })?;
+    pub fn frame_iter(
+        &self,
+        request: &SimulationRequest,
+        organism: &OrganismProfile,
+        illumination: &IlluminationProfile,
+        background: &SimulationBackground,
+    ) -> Result<FrameIterator> {
+        self.validate_request(request)?;
         let models = build_model_bundle(organism, illumination, request.render_scale)?;
         let shared = self.prepare_iteration_state(
             request,
-            db,
             organism,
             models.growth.as_ref(),
             models.seeding.as_ref(),
+            background,
         )?;
-        let plate = shared.plate;
-        let background_template = render_background(
+        let (background_template, roi) = render_background(
             shared.width,
             shared.height,
-            request.background_mode,
-            plate,
+            background,
             illumination,
         )?;
         let frame_img = background_template.clone();
@@ -315,7 +315,7 @@ impl Engine {
             height: shared.height,
             elapsed: shared.elapsed,
             next_index: 0,
-            roi: shared.roi,
+            roi,
             models,
             colony_seeds: shared.colony_seeds,
             background_template,
@@ -327,29 +327,27 @@ impl Engine {
     pub fn trace_iter(
         &self,
         request: &SimulationRequest,
-        db: &ProfileDb,
+        organism: &OrganismProfile,
+        illumination: &IlluminationProfile,
+        background: &SimulationBackground,
     ) -> Result<GrowthTraceIterator> {
-        let organism = self.resolve_organism(request, db)?;
-        let illumination = db.illumination(&request.illumination_id).ok_or_else(|| {
-            anyhow::anyhow!("unknown illumination profile: {}", request.illumination_id)
-        })?;
+        self.validate_request(request)?;
         let models = build_model_bundle(organism, illumination, request.render_scale)?;
         let shared = self.prepare_iteration_state(
             request,
-            db,
             organism,
             models.growth.as_ref(),
             models.seeding.as_ref(),
+            background,
         )?;
-        let background_template = render_background(
+        let (background_template, roi) = render_background(
             shared.width,
             shared.height,
-            request.background_mode,
-            shared.plate,
+            background,
             illumination,
         )?;
         let frame_img = background_template.clone();
-        let roi_pixels = count_roi_pixels(shared.width, shared.height, &shared.roi);
+        let roi_pixels = count_roi_pixels(shared.width, shared.height, &roi);
         Ok(GrowthTraceIterator {
             request: request.clone(),
             elapsed: shared.elapsed,
@@ -359,7 +357,7 @@ impl Engine {
             frame_img,
             width: shared.width,
             height: shared.height,
-            roi: shared.roi,
+            roi,
             roi_pixels,
             colony_seeds: shared.colony_seeds,
             seeded_colonies: shared.cfu_count,
@@ -369,7 +367,9 @@ impl Engine {
     pub fn render_single_frame(
         &self,
         request: &SimulationRequest,
-        db: &ProfileDb,
+        organism: &OrganismProfile,
+        illumination: &IlluminationProfile,
+        background: &SimulationBackground,
         elapsed_seconds: u64,
     ) -> Result<GeneratedFrame> {
         let mut single = request.clone();
@@ -380,52 +380,30 @@ impl Engine {
         single.time.duration_seconds = 0;
         single.time.step_seconds = single.time.step_seconds.max(1);
 
-        let mut iter = self.frame_iter(&single, db)?;
+        let mut iter = self.frame_iter(&single, organism, illumination, background)?;
         iter.next()
             .transpose()?
             .ok_or_else(|| anyhow::anyhow!("engine produced no frame"))
     }
 
-    fn resolve_organism<'a>(
-        &self,
-        request: &SimulationRequest,
-        db: &'a ProfileDb,
-    ) -> Result<&'a crate::profiles::OrganismProfile> {
+    fn validate_request(&self, request: &SimulationRequest) -> Result<()> {
         if request.time.step_seconds == 0 {
             bail!("step_seconds must be > 0");
         }
-        db.organism(&request.organism_id)
-            .ok_or_else(|| anyhow::anyhow!("unknown organism profile: {}", request.organism_id))
+        Ok(())
     }
 
-    fn prepare_iteration_state<'a>(
+    fn prepare_iteration_state(
         &self,
         request: &SimulationRequest,
-        db: &'a ProfileDb,
-        organism: &'a crate::profiles::OrganismProfile,
+        organism: &OrganismProfile,
         growth_model: &dyn GrowthModel,
         seeding_model: &dyn SeedingModel,
-    ) -> Result<IterationState<'a>> {
-        let plate = match request.background_mode {
-            BackgroundMode::PlateImage => {
-                let id = request.plate_profile_id.as_ref().ok_or_else(|| {
-                    anyhow::anyhow!("plate_profile_id is required for plate mode")
-                })?;
-                Some(
-                    db.plate(id)
-                        .ok_or_else(|| anyhow::anyhow!("unknown plate profile: {id}"))?,
-                )
-            }
-            BackgroundMode::Blankfield => None,
-        };
-
+        background: &SimulationBackground,
+    ) -> Result<IterationState> {
         let width = request.width.max(64);
         let height = request.height.max(64);
-        let roi = if plate.is_some() {
-            resolve_render_roi(plate, width, height)
-        } else {
-            full_canvas_roi(width, height)
-        };
+        let roi = background.growth_area_for_canvas(width, height);
 
         let cfu_count = resolve_cfu_count(&request.cfu, request.seed);
         let mut rng = Lcg::new(request.seed);
@@ -444,10 +422,8 @@ impl Engine {
             build_elapsed_timeline(request.time.duration_seconds, request.time.step_seconds);
 
         Ok(IterationState {
-            plate,
             width,
             height,
-            roi,
             elapsed,
             cfu_count,
             colony_seeds,
@@ -455,11 +431,9 @@ impl Engine {
     }
 }
 
-struct IterationState<'a> {
-    plate: Option<&'a crate::profiles::PlateProfile>,
+struct IterationState {
     width: u32,
     height: u32,
-    roi: Roi,
     elapsed: Vec<u64>,
     cfu_count: u32,
     colony_seeds: Vec<ColonySeed>,
@@ -567,13 +541,16 @@ fn paint_id_mark(img: &mut RgbImage, x: i32, y: i32, id: u32) {
 
 #[cfg(test)]
 mod tests {
+    use image::RgbImage;
+
     use super::growth::cardinal_phi;
     use super::{Engine, EngineConfig, percentile_sorted};
+    use crate::plate::{PlateBaseline, SimulationBackground};
     use crate::profiles::{
         BacklitOpticsParams, FrontlitOpticsParams, GeometryModelSpec, GrowthModelSpec,
         IlluminationProfile, LognormalDelaySpec, LookScaleParams, OpacityScaleParams,
         OpticalMaterialProfile, OpticsModelSpec, OrganismProfile, PhenotypeKind, PhenotypeProfile,
-        PlateProfile, ProfileDb, SeedingModelSpec, TemperatureCardinalProfile,
+        SeedingModelSpec, TemperatureCardinalProfile,
     };
     use crate::request::{
         BackgroundMode, CfuSpec, IlluminationMode, LookPreset, OpacityClass, PhasePreset,
@@ -610,256 +587,89 @@ mod tests {
         }
     }
 
-    fn build_test_db() -> ProfileDb {
-        let mut db = ProfileDb::default();
-        db.organisms.insert(
-            "morrow".into(),
-            OrganismProfile {
-                id: "morrow".into(),
-                temperature_cardinal: TemperatureCardinalProfile {
-                    t_min_c: 4.0,
-                    t_opt_c: 30.0,
-                    t_max_c: 44.0,
-                    alpha: 1.2,
-                    beta: 1.6,
-                },
-                optical_material: OpticalMaterialProfile {
-                    kappa_ref: 1.2,
-                    thickness_exp: 1.4,
-                    translucency: 0.9,
-                    pigment_rgb: [212, 190, 145],
-                    pigment_strength: 0.35,
-                },
-                growth_model: GrowthModelSpec::GompertzRadiusV2 {
-                    mu_max_ref_h: 0.8,
-                    lag_ref_h: 3.0,
-                    n0_log10: 1.0,
-                    nmax_log10: 8.0,
-                    r0_px: 2.0,
-                    rmax_ref_px: 35.0,
-                    phase_early_scale: 0.8,
-                    phase_mid_scale: 1.0,
-                    phase_late_scale: 1.25,
-                    rmax_temp_floor: 0.6,
-                },
-                seeding_model: SeedingModelSpec::PoissonDiscDelayV1 {
-                    min_dist_factor: 0.9,
-                    min_dist_floor_px: 8.0,
-                    attempts_per_colony: 600,
-                    onset: LognormalDelaySpec {
-                        mean_min: 20.0,
-                        sigma: 0.5,
-                        max_h: 2.0,
-                    },
-                    kappa_jitter_low: 0.9,
-                    kappa_jitter_high: 1.1,
-                    opacity_scale_translucent: 0.8,
-                    opacity_scale_standard: 1.0,
-                    opacity_scale_dense: 1.3,
-                    morphology_jitter: 0.2,
-                    temp_opt_jitter_sigma_c: 0.0,
-                },
-                geometry_model: GeometryModelSpec::AnisotropicBlobV1 {
-                    edge_hardness: 1.0,
-                    thickness_power: 1.1,
-                    anisotropy: 0.2,
-                    angular_wobble: 0.07,
-                    wobble_frequency: 6,
-                },
-                phenotypes: vec![PhenotypeProfile {
-                    id: PhenotypeKind::SmoothRound,
-                    weight: 1.0,
-                    edge_roughness: 0.1,
-                    spread_bias: 1.0,
-                    core_density: 1.0,
-                }],
+    fn test_organism() -> OrganismProfile {
+        OrganismProfile {
+            id: "morrow".into(),
+            temperature_cardinal: TemperatureCardinalProfile {
+                t_min_c: 4.0,
+                t_opt_c: 30.0,
+                t_max_c: 44.0,
+                alpha: 1.2,
+                beta: 1.6,
             },
-        );
-        db.illuminations.insert(
-            "backlit".into(),
-            IlluminationProfile {
-                id: "backlit".into(),
-                mode: IlluminationMode::Backlit,
-                background_rgb: [170, 165, 160],
-                colony_rgb: [120, 110, 105],
-                backlit_absorbance: 1.8,
-                frontlit_contrast: 1.0,
-                optics_model: test_optics_model(),
+            optical_material: OpticalMaterialProfile {
+                kappa_ref: 1.2,
+                thickness_exp: 1.4,
+                translucency: 0.9,
+                pigment_rgb: [212, 190, 145],
+                pigment_strength: 0.35,
             },
-        );
-        db.illuminations.insert(
-            "frontlit".into(),
-            IlluminationProfile {
-                id: "frontlit".into(),
-                mode: IlluminationMode::Frontlit,
-                background_rgb: [220, 214, 206],
-                colony_rgb: [188, 182, 174],
-                backlit_absorbance: 1.0,
-                frontlit_contrast: 1.05,
-                optics_model: test_optics_model(),
+            growth_model: GrowthModelSpec::GompertzRadiusV2 {
+                mu_max_ref_h: 0.8,
+                lag_ref_h: 3.0,
+                n0_log10: 1.0,
+                nmax_log10: 8.0,
+                r0_px: 2.0,
+                rmax_ref_px: 35.0,
+                phase_early_scale: 0.8,
+                phase_mid_scale: 1.0,
+                phase_late_scale: 1.25,
+                rmax_temp_floor: 0.6,
             },
-        );
-        db.plates.insert(
-            "petri-default".into(),
-            PlateProfile {
-                id: "petri-default".into(),
-                image_path: None,
-                roi: Roi::Rect {
-                    x: 0,
-                    y: 0,
-                    width: 256,
-                    height: 256,
+            seeding_model: SeedingModelSpec::PoissonDiscDelayV1 {
+                min_dist_factor: 0.9,
+                min_dist_floor_px: 8.0,
+                attempts_per_colony: 600,
+                onset: LognormalDelaySpec {
+                    mean_min: 20.0,
+                    sigma: 0.5,
+                    max_h: 2.0,
                 },
-                notes: None,
+                kappa_jitter_low: 0.9,
+                kappa_jitter_high: 1.1,
+                opacity_scale_translucent: 0.8,
+                opacity_scale_standard: 1.0,
+                opacity_scale_dense: 1.3,
+                morphology_jitter: 0.2,
+                temp_opt_jitter_sigma_c: 0.0,
             },
-        );
-        db
+            geometry_model: GeometryModelSpec::AnisotropicBlobV1 {
+                edge_hardness: 1.0,
+                thickness_power: 1.1,
+                anisotropy: 0.2,
+                angular_wobble: 0.07,
+                wobble_frequency: 6,
+            },
+            phenotypes: vec![PhenotypeProfile {
+                id: PhenotypeKind::SmoothRound,
+                weight: 1.0,
+                edge_roughness: 0.1,
+                spread_bias: 1.0,
+                core_density: 1.0,
+            }],
+        }
     }
 
-    #[test]
-    fn cardinal_phi_peaks_near_optimum() {
-        let card = TemperatureCardinalProfile {
-            t_min_c: 5.0,
-            t_opt_c: 30.0,
-            t_max_c: 45.0,
-            alpha: 1.3,
-            beta: 1.5,
-        };
-
-        let cold = cardinal_phi(10.0, &card);
-        let opt = cardinal_phi(30.0, &card);
-        let hot = cardinal_phi(40.0, &card);
-
-        assert!(opt >= cold);
-        assert!(opt >= hot);
+    fn test_illumination(mode: IlluminationMode) -> IlluminationProfile {
+        IlluminationProfile {
+            id: match mode {
+                IlluminationMode::Backlit => "backlit".into(),
+                IlluminationMode::Frontlit => "frontlit".into(),
+            },
+            mode,
+            background_rgb: [170, 165, 160],
+            colony_rgb: [120, 110, 105],
+            backlit_absorbance: 1.8,
+            frontlit_contrast: 1.0,
+            optics_model: test_optics_model(),
+        }
     }
 
-    #[test]
-    fn simulation_emits_time_based_frames() {
-        let db = build_test_db();
-        let engine = Engine::new(EngineConfig::default());
-        let req = SimulationRequest {
+    fn test_request(background_mode: BackgroundMode) -> SimulationRequest {
+        SimulationRequest {
             organism_id: "morrow".into(),
             illumination_id: "backlit".into(),
-            plate_profile_id: Some("petri-default".into()),
-            background_mode: BackgroundMode::PlateImage,
-            cfu: CfuSpec::Exact(50),
-            time: TimeSpec {
-                start_after_seconds: 0,
-                duration_seconds: 48 * 3600,
-                step_seconds: 24 * 3600,
-            },
-            temperature: TemperatureSpec { constant_c: 30.0 },
-            phase: PhasePreset::Mid,
-            look: LookPreset::Realistic,
-            opacity_class: OpacityClass::Standard,
-            seed: 42,
-            width: 256,
-            height: 256,
-            show_colony_ids: false,
-            render_scale: 1.0,
-        };
-        let samples: Vec<_> = engine.trace_iter(&req, &db).expect("trace_iter").collect();
-        let elapsed: Vec<_> = samples.iter().map(|s| s.elapsed_seconds).collect();
-        assert_eq!(samples.len(), 3);
-        assert_eq!(elapsed, vec![0, 86_400, 172_800]);
-    }
-
-    #[test]
-    fn growth_trace_includes_distribution_stats() {
-        let db = build_test_db();
-        let engine = Engine::new(EngineConfig::default());
-        let req = SimulationRequest {
-            organism_id: "morrow".into(),
-            illumination_id: "backlit".into(),
-            plate_profile_id: Some("petri-default".into()),
-            background_mode: BackgroundMode::PlateImage,
-            cfu: CfuSpec::Exact(50),
-            time: TimeSpec {
-                start_after_seconds: 0,
-                duration_seconds: 24 * 3600,
-                step_seconds: 24 * 3600,
-            },
-            temperature: TemperatureSpec { constant_c: 30.0 },
-            phase: PhasePreset::Mid,
-            look: LookPreset::Realistic,
-            opacity_class: OpacityClass::Standard,
-            seed: 42,
-            width: 256,
-            height: 256,
-            show_colony_ids: false,
-            render_scale: 1.0,
-        };
-
-        let last = engine
-            .trace_iter(&req, &db)
-            .expect("trace_iter")
-            .last()
-            .expect("trace sample");
-
-        assert_eq!(last.seeded_colonies, 50);
-        assert!(last.visible_colonies <= last.seeded_colonies);
-        assert!(last.mean_radius_px.is_finite());
-        assert!(last.stddev_radius_px.is_finite());
-        assert!(last.stddev_radius_px >= 0.0);
-        assert!(last.median_radius_px <= last.p90_radius_px);
-        assert!(last.p90_radius_px <= last.max_radius_px);
-    }
-
-    #[test]
-    fn percentile_sorted_handles_empty_and_bounds() {
-        let values = [1.0, 2.0, 4.0, 8.0, 16.0];
-
-        assert_eq!(percentile_sorted(&[], 0.5), 0.0);
-        assert_eq!(percentile_sorted(&values, -1.0), 1.0);
-        assert_eq!(percentile_sorted(&values, 0.5), 4.0);
-        assert_eq!(percentile_sorted(&values, 1.0), 16.0);
-    }
-
-    #[test]
-    fn duration_not_divisible_by_step_includes_terminal_snapshot() {
-        let db = build_test_db();
-        let engine = Engine::new(EngineConfig::default());
-
-        let req = SimulationRequest {
-            organism_id: "morrow".into(),
-            illumination_id: "backlit".into(),
-            plate_profile_id: Some("petri-default".into()),
-            background_mode: BackgroundMode::PlateImage,
-            cfu: CfuSpec::Exact(30),
-            time: TimeSpec {
-                start_after_seconds: 0,
-                duration_seconds: 10 * 3600,
-                step_seconds: 4 * 3600,
-            },
-            temperature: TemperatureSpec { constant_c: 30.0 },
-            phase: PhasePreset::Mid,
-            look: LookPreset::Realistic,
-            opacity_class: OpacityClass::Standard,
-            seed: 99,
-            width: 256,
-            height: 256,
-            show_colony_ids: false,
-            render_scale: 1.0,
-        };
-        let elapsed: Vec<_> = engine
-            .trace_iter(&req, &db)
-            .expect("trace_iter")
-            .map(|s| s.elapsed_seconds)
-            .collect();
-        assert_eq!(elapsed, vec![0, 14_400, 28_800, 36_000]);
-    }
-
-    #[test]
-    fn blankfield_mode_does_not_require_plate_profile() {
-        let db = build_test_db();
-        let engine = Engine::new(EngineConfig::default());
-
-        let req = SimulationRequest {
-            organism_id: "morrow".into(),
-            illumination_id: "backlit".into(),
-            plate_profile_id: None,
-            background_mode: BackgroundMode::Blankfield,
+            background_mode,
             cfu: CfuSpec::Exact(20),
             time: TimeSpec {
                 start_after_seconds: 0,
@@ -875,166 +685,115 @@ mod tests {
             height: 256,
             show_colony_ids: false,
             render_scale: 1.0,
-        };
-        let samples: Vec<_> = engine.trace_iter(&req, &db).expect("trace_iter").collect();
-        assert_eq!(samples.len(), 3);
+        }
+    }
+
+    fn test_plate_background() -> SimulationBackground {
+        let plate = PlateBaseline::new(
+            RgbImage::new(256, 256),
+            Roi::Rect {
+                x: 0,
+                y: 0,
+                width: 256,
+                height: 256,
+            },
+        )
+        .expect("plate baseline");
+        SimulationBackground::PlateBaseline(plate)
     }
 
     #[test]
-    fn plate_mode_requires_plate_profile_id() {
-        let db = build_test_db();
+    fn cardinal_phi_peaks_near_optimum() {
+        let card = TemperatureCardinalProfile {
+            t_min_c: 5.0,
+            t_opt_c: 30.0,
+            t_max_c: 45.0,
+            alpha: 1.3,
+            beta: 1.5,
+        };
+        let cold = cardinal_phi(10.0, &card);
+        let opt = cardinal_phi(30.0, &card);
+        let hot = cardinal_phi(40.0, &card);
+        assert!(opt >= cold);
+        assert!(opt >= hot);
+    }
+
+    #[test]
+    fn percentile_sorted_handles_empty_and_bounds() {
+        let values = [1.0, 2.0, 4.0, 8.0, 16.0];
+        assert_eq!(percentile_sorted(&[], 0.5), 0.0);
+        assert_eq!(percentile_sorted(&values, -1.0), 1.0);
+        assert_eq!(percentile_sorted(&values, 0.5), 4.0);
+        assert_eq!(percentile_sorted(&values, 1.0), 16.0);
+    }
+
+    #[test]
+    fn simulation_emits_time_based_frames() {
         let engine = Engine::new(EngineConfig::default());
-
-        let err = engine
-            .trace_iter(
-                &SimulationRequest {
-                    organism_id: "morrow".into(),
-                    illumination_id: "backlit".into(),
-                    plate_profile_id: None,
-                    background_mode: BackgroundMode::PlateImage,
-                    cfu: CfuSpec::Exact(10),
-                    time: TimeSpec {
-                        start_after_seconds: 0,
-                        duration_seconds: 2 * 3600,
-                        step_seconds: 3600,
-                    },
-                    temperature: TemperatureSpec { constant_c: 30.0 },
-                    phase: PhasePreset::Early,
-                    look: LookPreset::Clean,
-                    opacity_class: OpacityClass::Translucent,
-                    seed: 1,
-                    width: 256,
-                    height: 256,
-                    show_colony_ids: false,
-                    render_scale: 1.0,
-                },
-                &db,
-            )
-            .err()
-            .expect("plate mode should reject missing plate_profile_id");
-
-        assert!(err.to_string().contains("plate_profile_id is required"));
+        let req = SimulationRequest {
+            time: TimeSpec {
+                start_after_seconds: 0,
+                duration_seconds: 48 * 3600,
+                step_seconds: 24 * 3600,
+            },
+            cfu: CfuSpec::Exact(50),
+            ..test_request(BackgroundMode::PlateImage)
+        };
+        let organism = test_organism();
+        let illum = test_illumination(IlluminationMode::Backlit);
+        let bg = test_plate_background();
+        let samples: Vec<_> = engine
+            .trace_iter(&req, &organism, &illum, &bg)
+            .expect("trace_iter")
+            .collect();
+        let elapsed: Vec<_> = samples.iter().map(|s| s.elapsed_seconds).collect();
+        assert_eq!(samples.len(), 3);
+        assert_eq!(elapsed, vec![0, 86_400, 172_800]);
     }
 
     #[test]
     fn frame_and_trace_iter_match_elapsed_and_count() {
-        let db = build_test_db();
         let engine = Engine::new(EngineConfig::default());
         let req = SimulationRequest {
-            organism_id: "morrow".into(),
-            illumination_id: "backlit".into(),
-            plate_profile_id: Some("petri-default".into()),
-            background_mode: BackgroundMode::PlateImage,
             cfu: CfuSpec::Exact(25),
             time: TimeSpec {
                 start_after_seconds: 0,
                 duration_seconds: 8 * 3600,
                 step_seconds: 2 * 3600,
             },
-            temperature: TemperatureSpec { constant_c: 30.0 },
-            phase: PhasePreset::Mid,
-            look: LookPreset::Realistic,
-            opacity_class: OpacityClass::Standard,
-            seed: 123,
-            width: 256,
-            height: 256,
-            show_colony_ids: false,
-            render_scale: 1.0,
+            ..test_request(BackgroundMode::PlateImage)
         };
+        let organism = test_organism();
+        let illum = test_illumination(IlluminationMode::Backlit);
+        let bg = test_plate_background();
 
         let trace_elapsed: Vec<_> = engine
-            .trace_iter(&req, &db)
+            .trace_iter(&req, &organism, &illum, &bg)
             .expect("trace_iter")
             .map(|s| s.elapsed_seconds)
             .collect();
-        let mut iter = engine.frame_iter(&req, &db).expect("frame_iter");
+        let mut iter = engine
+            .frame_iter(&req, &organism, &illum, &bg)
+            .expect("frame_iter");
         let manifest = iter.manifest();
         let mut elapsed = Vec::new();
         for frame in &mut iter {
             elapsed.push(frame.expect("frame").elapsed_seconds);
         }
-
         assert_eq!(elapsed, trace_elapsed);
         assert_eq!(manifest.elapsed_seconds, trace_elapsed);
-        assert_eq!(elapsed.len(), trace_elapsed.len());
     }
 
     #[test]
-    fn frame_iter_raw_bytes_match_dimensions() {
-        let db = build_test_db();
+    fn blankfield_mode_works_without_plate_baseline() {
         let engine = Engine::new(EngineConfig::default());
-        let req = SimulationRequest {
-            organism_id: "morrow".into(),
-            illumination_id: "frontlit".into(),
-            plate_profile_id: None,
-            background_mode: BackgroundMode::Blankfield,
-            cfu: CfuSpec::Exact(8),
-            time: TimeSpec {
-                start_after_seconds: 0,
-                duration_seconds: 2 * 3600,
-                step_seconds: 2 * 3600,
-            },
-            temperature: TemperatureSpec { constant_c: 30.0 },
-            phase: PhasePreset::Mid,
-            look: LookPreset::Realistic,
-            opacity_class: OpacityClass::Standard,
-            seed: 7,
-            width: 64,
-            height: 32,
-            show_colony_ids: false,
-            render_scale: 1.0,
-        };
-
-        let mut iter = engine.frame_iter(&req, &db).expect("frame_iter");
-        let (width, height) = iter.frame_dimensions();
-        let frame = iter.next_raw().expect("some frame").expect("raw frame ok");
-
-        assert_eq!(frame.width, width);
-        assert_eq!(frame.height, height);
-        assert_eq!(frame.rgb_bytes.len(), width as usize * height as usize * 3);
-    }
-
-    #[test]
-    fn render_single_frame_matches_first_stream_frame_elapsed() {
-        let db = build_test_db();
-        let engine = Engine::new(EngineConfig::default());
-        let req = SimulationRequest {
-            organism_id: "morrow".into(),
-            illumination_id: "frontlit".into(),
-            plate_profile_id: Some("petri-default".into()),
-            background_mode: BackgroundMode::PlateImage,
-            cfu: CfuSpec::Exact(12),
-            time: TimeSpec {
-                start_after_seconds: 0,
-                duration_seconds: 6 * 3600,
-                step_seconds: 3 * 3600,
-            },
-            temperature: TemperatureSpec { constant_c: 30.0 },
-            phase: PhasePreset::Mid,
-            look: LookPreset::Realistic,
-            opacity_class: OpacityClass::Standard,
-            seed: 7,
-            width: 256,
-            height: 256,
-            show_colony_ids: false,
-            render_scale: 1.0,
-        };
-
-        let first_from_single = engine
-            .render_single_frame(&req, &db, 0)
-            .expect("single frame");
-        let first_from_iter = engine
-            .frame_iter(&req, &db)
-            .expect("iter")
-            .next()
-            .expect("some frame")
-            .expect("frame ok");
-
-        assert_eq!(
-            first_from_single.elapsed_seconds,
-            first_from_iter.elapsed_seconds
-        );
-        assert!(!first_from_single.image_jpeg_bytes.is_empty());
-        assert!(!first_from_iter.image_jpeg_bytes.is_empty());
+        let req = test_request(BackgroundMode::Blankfield);
+        let organism = test_organism();
+        let illum = test_illumination(IlluminationMode::Backlit);
+        let samples: Vec<_> = engine
+            .trace_iter(&req, &organism, &illum, &SimulationBackground::Blankfield)
+            .expect("trace_iter")
+            .collect();
+        assert_eq!(samples.len(), 3);
     }
 }

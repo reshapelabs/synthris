@@ -61,7 +61,6 @@ pub struct TemperatureSpec {
 pub struct SimulationRequest {
     pub organism_id: String,
     pub illumination_id: String,
-    pub plate_profile_id: Option<String>,
     pub background_mode: BackgroundMode,
     pub cfu: CfuSpec,
     pub time: TimeSpec,
@@ -96,7 +95,6 @@ pub struct GeneratedFrame {
 pub struct SimulationManifest {
     pub organism_id: String,
     pub illumination_id: String,
-    pub plate_profile_id: Option<String>,
     pub background_mode: BackgroundMode,
     pub cfu_count: u32,
     pub temperature_c: f32,

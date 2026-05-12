@@ -1,19 +1,20 @@
 use anyhow::{Context, Result, anyhow, bail};
 use std::process::Command;
 use std::time::Duration;
+use synthris_plate_assets::{PlateView, builtin_plate_baseline, parse_plate_type};
 use tokio::time::Instant;
 use tracing::{info, warn};
 
 use serde::Serialize;
 use synthris_core::{
     CfuSpec, ColonyAnnotation, Engine, EngineConfig, GeneratedFrame, ProfileDb, ProfileDbConfig,
-    TimeSpec,
+    SimulationBackground, TimeSpec,
 };
 
 use crate::config::AgentConfig;
 use crate::mapping::{
     IlluminationSelection, build_simulation_request, build_time_spec, derive_plate_seed,
-    map_preset_to_illumination, resolve_job_params, resolve_plate_profile_id,
+    map_preset_to_illumination, resolve_job_params,
 };
 use crate::ris_client::{PlateImageAdd, RisClient, RisJob, Well};
 
@@ -125,20 +126,28 @@ async fn process_single_job(
         for preset_id in &presets {
             for plate in &plates {
                 let illumination = map_preset_to_illumination(*preset_id)?;
-                let plate_profile_id =
-                    resolve_plate_profile_id(&plate.plate_type_id, illumination)?;
                 let illumination_id = illumination_profile_id(illumination);
+                let plate_type = parse_plate_type(&plate.plate_type_id)?;
+                let plate_view = match illumination {
+                    IlluminationSelection::Frontlit => PlateView::Top,
+                    IlluminationSelection::Backlit => PlateView::Bottom,
+                };
+                let asset = builtin_plate_baseline(plate_type, plate_view).ok_or_else(|| {
+                    anyhow!(
+                        "missing built-in plate baseline for plate_type={} view={:?}",
+                        plate.plate_type_id,
+                        plate_view
+                    )
+                })?;
                 let plate_seed = derive_plate_seed(params.base_seed, plate.id);
-                let (source_width, source_height) =
-                    source_dimensions_for_plate_profile(db, &plate_profile_id)
-                        .unwrap_or((1024, 1024));
+                let source_width = asset.source_size.width;
+                let source_height = asset.source_size.height;
                 let (width, height) =
                     scaled_dimensions(source_width, source_height, config.default_scale_factor);
 
                 let req = build_simulation_request(
                     &params.organism_id,
                     illumination_id,
-                    &plate_profile_id,
                     &params,
                     TimeSpec {
                         start_after_seconds: time_spec.start_after_seconds,
@@ -150,7 +159,16 @@ async fn process_single_job(
                     height,
                     config.default_scale_factor,
                 );
-                let frames = engine.frame_iter(&req, db).with_context(|| {
+                let organism = db.organism(&req.organism_id).ok_or_else(|| {
+                    anyhow!("unknown organism profile: {}", req.organism_id)
+                })?;
+                let illumination_profile = db.illumination(&req.illumination_id).ok_or_else(|| {
+                    anyhow!("unknown illumination profile: {}", req.illumination_id)
+                })?;
+                let plate_background = SimulationBackground::PlateBaseline(asset.decode()?);
+                let frames = engine
+                    .frame_iter(&req, organism, illumination_profile, &plate_background)
+                    .with_context(|| {
                     format!(
                         "failed creating frame stream plate={} preset={}",
                         plate.id, preset_id
@@ -350,18 +368,6 @@ async fn fail_started_jobs_on_boot(client: &RisClient) -> Result<()> {
         );
     }
     Ok(())
-}
-
-fn source_dimensions_for_plate_profile(
-    db: &ProfileDb,
-    plate_profile_id: &str,
-) -> Option<(u32, u32)> {
-    let plate = db.plate(plate_profile_id)?;
-    let image_path = plate.image_path.as_ref()?;
-    if !image_path.exists() {
-        return None;
-    }
-    image::image_dimensions(image_path).ok()
 }
 
 fn resolve_presets(job: &RisJob) -> Result<Vec<uuid::Uuid>> {

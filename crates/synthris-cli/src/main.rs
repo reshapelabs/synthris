@@ -6,9 +6,11 @@ use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand, ValueEnum};
 use pprof::{ProfilerGuard, protos::Message};
 use synthris_core::{
-    BackgroundMode, CfuSpec, Engine, EngineConfig, LookPreset, OpacityClass, PhasePreset,
-    PlateProfile, ProfileDb, ProfileDbConfig, Roi, SimulationRequest, TemperatureSpec, TimeSpec,
+    BackgroundMode, CfuSpec, Engine, EngineConfig, IlluminationProfile, LookPreset, OpacityClass,
+    OrganismProfile, PhasePreset, PlateBaseline, ProfileDb, ProfileDbConfig,
+    SimulationBackground, SimulationRequest, TemperatureSpec, TimeSpec,
 };
+use synthris_plate_assets::{BUILTIN_PLATE_BASELINES, builtin_plate_baseline_by_id};
 use tokio::fs;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
@@ -210,26 +212,6 @@ enum PlateCommand {
         #[arg(short = 'P', long = "profile-dir")]
         profile_dirs: Vec<PathBuf>,
     },
-    Init {
-        #[arg(short = 'o', long)]
-        out: PathBuf,
-        #[arg(short = 'i', long)]
-        id: String,
-        #[arg(short = 'm', long)]
-        image: Option<PathBuf>,
-    },
-    DetectRoi {
-        #[arg(short = 'm', long)]
-        image: PathBuf,
-    },
-    Edit {
-        #[arg(short = 'p', long)]
-        profile: PathBuf,
-    },
-    Validate {
-        #[arg(short = 'p', long)]
-        profile: PathBuf,
-    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -390,7 +372,7 @@ struct RequestBuildOptions {
     organism: Option<String>,
     cfu: Option<String>,
     illumination: Option<String>,
-    plate_profile: Option<String>,
+    plate_baseline: Option<String>,
     background_mode: Option<BackgroundModeArg>,
     duration: String,
     step: String,
@@ -431,13 +413,12 @@ async fn run_generate(
     profile_dirs: &[PathBuf],
 ) -> Result<()> {
     let db = load_profile_db(profile_dirs)?;
-    let (config, req) = build_simulation_request(
-        &db,
+    let (config, req, plate_baseline_id) = build_simulation_request(
         RequestBuildOptions {
             organism,
             cfu,
             illumination,
-            plate_profile,
+            plate_baseline: plate_profile,
             background_mode,
             duration,
             step,
@@ -456,7 +437,9 @@ async fn run_generate(
     )?;
 
     let engine = Engine::new(config);
-    let mut frame_iter = engine.frame_iter(&req, &db)?;
+    let (organism, illumination_profile, background) =
+        resolve_render_inputs(&db, &req, plate_baseline_id.as_deref())?;
+    let mut frame_iter = engine.frame_iter(&req, &organism, &illumination_profile, &background)?;
     let manifest = frame_iter.manifest();
     let frame_count = frame_iter.frame_count();
 
@@ -559,13 +542,12 @@ async fn run_trace(
     profile_dirs: &[PathBuf],
 ) -> Result<()> {
     let db = load_profile_db(profile_dirs)?;
-    let (config, req) = build_simulation_request(
-        &db,
+    let (config, req, plate_baseline_id) = build_simulation_request(
         RequestBuildOptions {
             organism,
             cfu,
             illumination,
-            plate_profile,
+            plate_baseline: plate_profile,
             background_mode,
             duration,
             step,
@@ -584,8 +566,10 @@ async fn run_trace(
     )?;
 
     let engine = Engine::new(config);
+    let (organism, illumination_profile, background) =
+        resolve_render_inputs(&db, &req, plate_baseline_id.as_deref())?;
     let mut jsonl = Vec::new();
-    for sample in engine.trace_iter(&req, &db)? {
+    for sample in engine.trace_iter(&req, &organism, &illumination_profile, &background)? {
         serde_json::to_writer(&mut jsonl, &sample)?;
         jsonl.push(b'\n');
     }
@@ -605,10 +589,9 @@ async fn run_trace(
 }
 
 fn build_simulation_request(
-    db: &ProfileDb,
     options: RequestBuildOptions,
     warn_missing_source_dims: bool,
-) -> Result<(EngineConfig, SimulationRequest)> {
+) -> Result<(EngineConfig, SimulationRequest, Option<String>)> {
     let phase_preset = options.phase.map(Into::into);
     let look_preset = options.look.map(Into::into);
     let opacity = options.opacity_class.map(Into::into);
@@ -626,18 +609,17 @@ fn build_simulation_request(
     let step_seconds = parse_time_span(&options.step)?;
     let start_after_seconds = parse_time_span_allow_zero(&options.start_after)?;
 
-    let plate_profile_id = match background_mode_resolved {
+    let plate_baseline_id = match background_mode_resolved {
         BackgroundMode::Blankfield => None,
         BackgroundMode::PlateImage => Some(
             options
-                .plate_profile
+                .plate_baseline
                 .context("--plate-profile is required for plate mode")?,
         ),
     };
 
     let config = EngineConfig::default();
-    let source_dims =
-        source_dims_for_request(background_mode_resolved, plate_profile_id.as_deref(), db);
+    let source_dims = source_dims_for_request(background_mode_resolved, plate_baseline_id.as_deref());
     if warn_missing_source_dims
         && background_mode_resolved == BackgroundMode::PlateImage
         && source_dims.is_none()
@@ -660,7 +642,6 @@ fn build_simulation_request(
         SimulationRequest {
             organism_id,
             illumination_id,
-            plate_profile_id,
             background_mode: background_mode_resolved,
             cfu: cfu_spec,
             time: TimeSpec {
@@ -680,93 +661,53 @@ fn build_simulation_request(
             show_colony_ids: options.show_colony_ids,
             render_scale: options.render_scale.clamp(0.05, 4.0),
         },
+        plate_baseline_id,
     ))
+}
+
+fn resolve_render_inputs(
+    db: &ProfileDb,
+    req: &SimulationRequest,
+    plate_baseline_id: Option<&str>,
+) -> Result<(OrganismProfile, IlluminationProfile, SimulationBackground)> {
+    let organism = db
+        .organism(&req.organism_id)
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("unknown organism profile: {}", req.organism_id))?;
+    let illumination = db
+        .illumination(&req.illumination_id)
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("unknown illumination profile: {}", req.illumination_id))?;
+
+    let background = match req.background_mode {
+        BackgroundMode::Blankfield => SimulationBackground::Blankfield,
+        BackgroundMode::PlateImage => {
+            let id = plate_baseline_id.context("--plate-profile is required for plate mode")?;
+            let asset = builtin_plate_baseline_by_id(id)
+                .ok_or_else(|| anyhow::anyhow!("unknown plate baseline: {id}"))?;
+            let plate: PlateBaseline = asset.decode()?;
+            SimulationBackground::PlateBaseline(plate)
+        }
+    };
+
+    Ok((organism, illumination, background))
 }
 
 async fn run_plate(command: PlateCommand) -> Result<()> {
     match command {
-        PlateCommand::List { profile_dirs } => {
-            let db = load_profile_db_any(&profile_dirs)?;
-            if db.plates.is_empty() {
-                println!("no plate profiles found");
-                return Ok(());
+        PlateCommand::List { profile_dirs: _ } => {
+            let mut items: Vec<_> = BUILTIN_PLATE_BASELINES.iter().collect();
+            items.sort_by(|a, b| a.id.cmp(b.id));
+            for item in items {
+                println!(
+                    "{}\t{:?}\t{:?}\t{}x{}",
+                    item.id,
+                    item.plate_type,
+                    item.view,
+                    item.source_size.width,
+                    item.source_size.height
+                );
             }
-
-            let mut items: Vec<(&str, &PlateProfile)> =
-                db.plates.iter().map(|(id, p)| (id.as_str(), p)).collect();
-            items.sort_by(|a, b| a.0.cmp(b.0));
-
-            for (id, profile) in items {
-                if let Some(path) = &profile.image_path {
-                    println!("{id}\t{}", path.display());
-                } else {
-                    println!("{id}\t(no image)");
-                }
-            }
-            Ok(())
-        }
-        PlateCommand::Init { out, id, image } => {
-            let roi = if let Some(ref image_path) = image {
-                let (w, h) = image::image_dimensions(image_path).with_context(|| {
-                    format!(
-                        "failed to read image dimensions for {}",
-                        image_path.display()
-                    )
-                })?;
-                Roi::Rect {
-                    x: 0,
-                    y: 0,
-                    width: w,
-                    height: h,
-                }
-            } else {
-                Roi::Rect {
-                    x: 0,
-                    y: 0,
-                    width: 1024,
-                    height: 1024,
-                }
-            };
-
-            let profile = PlateProfile {
-                id,
-                image_path: image,
-                roi,
-                notes: Some("edit roi with `synthris plate edit`".to_string()),
-            };
-            profile.validate()?;
-
-            if let Some(parent) = out.parent() {
-                fs::create_dir_all(parent).await?;
-            }
-            fs::write(&out, encode_plate_profile(&out, &profile)?).await?;
-            println!("wrote plate profile template to {}", out.display());
-            Ok(())
-        }
-        PlateCommand::DetectRoi { image } => {
-            let (w, h) = image::image_dimensions(&image).with_context(|| {
-                format!("failed to read image dimensions for {}", image.display())
-            })?;
-            let margin_w = (w as f32 * 0.08) as u32;
-            let margin_h = (h as f32 * 0.08) as u32;
-            let roi = Roi::Rect {
-                x: margin_w,
-                y: margin_h,
-                width: w.saturating_sub(margin_w * 2),
-                height: h.saturating_sub(margin_h * 2),
-            };
-            println!("{}", serde_json::to_string_pretty(&roi)?);
-            Ok(())
-        }
-        PlateCommand::Edit { profile } => {
-            interactive_edit_profile(&profile).await?;
-            Ok(())
-        }
-        PlateCommand::Validate { profile } => {
-            let raw = fs::read_to_string(&profile).await?;
-            let p = decode_plate_profile(&profile, &raw)?;
-            p.validate()?;
-            println!("plate profile valid: {}", profile.display());
             Ok(())
         }
     }
@@ -898,72 +839,17 @@ async fn run_perf(command: PerfCommand) -> Result<()> {
     }
 }
 
-async fn interactive_edit_profile(profile_path: &Path) -> Result<()> {
-    let raw = fs::read_to_string(profile_path)
-        .await
-        .with_context(|| format!("failed reading profile {}", profile_path.display()))?;
-    let mut profile = decode_plate_profile(profile_path, &raw)?;
-
-    println!("Editing: {}", profile_path.display());
-    println!(
-        "Current ROI: {}",
-        serde_json::to_string_pretty(&profile.roi)?
-    );
-    println!("Choose ROI kind: [circle|rect|keep]");
-    let kind = read_line("> ")?;
-
-    match kind.trim() {
-        "circle" => {
-            let x = read_u32("x")?;
-            let y = read_u32("y")?;
-            let radius = read_u32("radius")?;
-            profile.roi = Roi::Circle { x, y, radius };
-        }
-        "rect" => {
-            let x = read_u32("x")?;
-            let y = read_u32("y")?;
-            let width = read_u32("width")?;
-            let height = read_u32("height")?;
-            profile.roi = Roi::Rect {
-                x,
-                y,
-                width,
-                height,
-            };
-        }
-        "keep" | "" => {}
-        other => bail!("unknown ROI kind: {other}"),
-    }
-
-    profile.validate()?;
-    fs::write(profile_path, encode_plate_profile(profile_path, &profile)?).await?;
-    println!("saved {}", profile_path.display());
-    Ok(())
-}
-
-fn read_line(prompt: &str) -> Result<String> {
-    print!("{prompt}");
-    io::stdout().flush()?;
-    let mut s = String::new();
-    io::stdin().read_line(&mut s)?;
-    Ok(s.trim().to_string())
-}
-
-fn read_u32(field: &str) -> Result<u32> {
-    let val = read_line(&format!("{field}: "))?;
-    val.parse::<u32>()
-        .with_context(|| format!("invalid integer for {field}: {val}"))
-}
-
 fn load_profile_db(profile_dirs: &[PathBuf]) -> Result<ProfileDb> {
     let db = load_profile_db_any(profile_dirs)?;
     if db.organisms.is_empty() {
         bail!(
-            "no organism profiles found; add profiles/organisms/*.(toml|json) or pass --profile-dir"
+            "no organism profiles found; defaults should come from crates/synthris-core/profiles/organisms or pass --profile-dir"
         );
     }
     if db.illuminations.is_empty() {
-        bail!("no illumination profiles found; add profiles/illumination/*.(toml|json)");
+        bail!(
+            "no illumination profiles found; defaults should come from crates/synthris-core/profiles/illumination or pass --profile-dir"
+        );
     }
 
     Ok(db)
@@ -1066,19 +952,13 @@ fn unix_timestamp_secs() -> u64 {
 
 fn source_dims_for_request(
     mode: BackgroundMode,
-    plate_profile_id: Option<&str>,
-    db: &ProfileDb,
+    plate_baseline_id: Option<&str>,
 ) -> Option<(u32, u32)> {
     if mode != BackgroundMode::PlateImage {
         return None;
     }
-
-    let plate = db.plate(plate_profile_id?)?;
-    let path = plate.image_path.as_ref()?;
-    if !path.exists() {
-        return None;
-    }
-    image::image_dimensions(path).ok()
+    let asset = builtin_plate_baseline_by_id(plate_baseline_id?)?;
+    Some((asset.source_size.width, asset.source_size.height))
 }
 
 fn resolve_output_size(
@@ -1121,45 +1001,6 @@ fn resolve_output_size(
     }
 }
 
-fn decode_plate_profile(path: &Path, raw: &str) -> Result<PlateProfile> {
-    match profile_format(path)? {
-        ProfileFormat::Json => serde_json::from_str(raw)
-            .with_context(|| format!("invalid json profile {}", path.display())),
-        ProfileFormat::Toml => {
-            toml::from_str(raw).with_context(|| format!("invalid toml profile {}", path.display()))
-        }
-    }
-}
-
-fn encode_plate_profile(path: &Path, profile: &PlateProfile) -> Result<Vec<u8>> {
-    let text = match profile_format(path)? {
-        ProfileFormat::Json => serde_json::to_string_pretty(profile)?,
-        ProfileFormat::Toml => toml::to_string_pretty(profile)?,
-    };
-    Ok(text.into_bytes())
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ProfileFormat {
-    Json,
-    Toml,
-}
-
-fn profile_format(path: &Path) -> Result<ProfileFormat> {
-    let ext = path
-        .extension()
-        .and_then(|e| e.to_str())
-        .ok_or_else(|| anyhow::anyhow!("profile file must have .toml or .json extension"))?;
-
-    if ext.eq_ignore_ascii_case("json") {
-        return Ok(ProfileFormat::Json);
-    }
-    if ext.eq_ignore_ascii_case("toml") {
-        return Ok(ProfileFormat::Toml);
-    }
-
-    bail!("profile file must have .toml or .json extension")
-}
 
 #[cfg(test)]
 mod tests {

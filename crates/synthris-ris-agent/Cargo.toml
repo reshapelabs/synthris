@@ -16,3 +16,4 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 uuid.workspace = true
 synthris-core = { path = "../synthris-core" }
+synthris-plate-assets = { path = "../synthris-plate-assets" }

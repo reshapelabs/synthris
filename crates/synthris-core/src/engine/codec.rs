@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use image::RgbImage;
 
 pub fn encode_jpeg(img: &RgbImage, quality: u8) -> Result<Vec<u8>> {
@@ -29,12 +29,6 @@ fn encode_with_selected_backend(img: &RgbImage, quality: u8) -> Result<Vec<u8>> 
 #[cfg(not(feature = "turbojpeg"))]
 fn encode_with_selected_backend(img: &RgbImage, quality: u8) -> Result<Vec<u8>> {
     encode_with_image(img, quality)
-}
-
-pub fn decode_rgb_image(path: &std::path::Path) -> Result<RgbImage> {
-    image::open(path)
-        .with_context(|| format!("failed to open image {}", path.display()))
-        .map(|i| i.to_rgb8())
 }
 
 pub fn resize_rgb(
