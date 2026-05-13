@@ -26,7 +26,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 COPY --from=builder /app/target/release/synthris-ris-agent /app/synthris-ris-agent
-COPY profiles /app/profiles
 COPY src/synthris/data /app/src/synthris/data
 
 ENV RUST_LOG=synthris_ris_agent=info,synthris_core=info
