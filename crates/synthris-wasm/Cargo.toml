@@ -11,7 +11,7 @@ crate-type = ["cdylib", "rlib"]
 anyhow.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-toml.workspace = true
 synthris-core = { path = "../synthris-core" }
+synthris-plate-assets = { path = "../synthris-plate-assets" }
 wasm-bindgen = "0.2"
 console_error_panic_hook = "0.1"

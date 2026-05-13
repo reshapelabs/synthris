@@ -13,7 +13,7 @@
 }
 
 body {
-  margin: 0;
+  margin: 0 15% 0 15%;
   font-family: "Space Grotesk", sans-serif;
   color: var(--ink);
   background:
@@ -105,12 +105,41 @@ button {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
+  align-items: center;
 }
 
 .engine-status {
   font-family: "IBM Plex Mono", monospace;
   font-size: 0.85rem;
   color: var(--muted);
+}
+
+.busy {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.hidden {
+  display: none !important;
+}
+
+.spinner {
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  border: 2px solid #c6d8d1;
+  border-top-color: var(--accent);
+  animation: spin 0.9s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .scrubber {

@@ -6,9 +6,10 @@ use anyhow::{Context, Result, anyhow};
 use serde::Deserialize;
 use synthris_core::engine::FrameIterator;
 use synthris_core::{
-    BackgroundMode, CfuSpec, Engine, EngineConfig, IlluminationProfile, LookPreset, OpacityClass,
-    OrganismProfile, PhasePreset, ProfileDb, SimulationRequest, TemperatureSpec, TimeSpec,
+    BackgroundMode, CfuSpec, Engine, EngineConfig, LookPreset, OpacityClass, PhasePreset, ProfileDb,
+    SimulationBackground, SimulationRequest, TemperatureSpec, TimeSpec,
 };
+use synthris_plate_assets::{BUILTIN_PLATE_BASELINES, builtin_plate_baseline_by_id};
 use wasm_bindgen::prelude::*;
 
 thread_local! {
@@ -47,6 +48,8 @@ struct UiSimulationRequest {
     cfu: u32,
     width: Option<u32>,
     height: Option<u32>,
+    background_mode: Option<String>,
+    plate_baseline_id: Option<String>,
 }
 
 #[wasm_bindgen(getter_with_clone)]
@@ -61,7 +64,7 @@ pub struct WasmFrame {
 
 #[wasm_bindgen]
 pub fn list_organisms() -> Result<JsValue, JsValue> {
-    let db = embedded_profile_db().map_err(as_js_err)?;
+    let db = ProfileDb::builtin().map_err(as_js_err)?;
     let mut ids: Vec<String> = db.organisms.keys().cloned().collect();
     ids.sort();
     serde_json::to_string(&ids)
@@ -71,9 +74,18 @@ pub fn list_organisms() -> Result<JsValue, JsValue> {
 
 #[wasm_bindgen]
 pub fn list_illuminations() -> Result<JsValue, JsValue> {
-    let db = embedded_profile_db().map_err(as_js_err)?;
+    let db = ProfileDb::builtin().map_err(as_js_err)?;
     let mut ids: Vec<String> = db.illuminations.keys().cloned().collect();
     ids.sort();
+    serde_json::to_string(&ids)
+        .map(|s| JsValue::from_str(&s))
+        .map_err(|e| as_js_err(anyhow!(e)))
+}
+
+#[wasm_bindgen]
+pub fn list_plate_baselines() -> Result<JsValue, JsValue> {
+    let mut ids: Vec<&str> = BUILTIN_PLATE_BASELINES.iter().map(|a| a.id).collect();
+    ids.sort_unstable();
     serde_json::to_string(&ids)
         .map(|s| JsValue::from_str(&s))
         .map_err(|e| as_js_err(anyhow!(e)))
@@ -84,10 +96,20 @@ pub fn create_simulation(request_json: &str) -> Result<u32, JsValue> {
     PANIC_HOOK.call_once(console_error_panic_hook::set_once);
     let req: UiSimulationRequest =
         serde_json::from_str(request_json).context("invalid simulation request json").map_err(as_js_err)?;
-    let db = embedded_profile_db().map_err(as_js_err)?;
-    let sim_req = map_ui_request(req);
+    let db = ProfileDb::builtin().map_err(as_js_err)?;
+    let sim_req = map_ui_request(&req);
+    let background = resolve_background(&req).map_err(as_js_err)?;
+    let organism = db
+        .organism(&sim_req.organism_id)
+        .ok_or_else(|| as_js_err(anyhow!("unknown organism profile: {}", sim_req.organism_id)))?;
+    let illumination = db
+        .illumination(&sim_req.illumination_id)
+        .ok_or_else(|| as_js_err(anyhow!("unknown illumination profile: {}", sim_req.illumination_id)))?;
+
     let engine = Engine::new(EngineConfig::default());
-    let iter = engine.frame_iter(&sim_req, &db).map_err(as_js_err)?;
+    let iter = engine
+        .frame_iter(&sim_req, organism, illumination, &background)
+        .map_err(as_js_err)?;
     let frame_count = iter.frame_count();
 
     STATE.with(|state| {
@@ -145,6 +167,46 @@ pub fn next_frame_rgba(sim_id: u32, frame_index: u32) -> Result<WasmFrame, JsVal
 }
 
 #[wasm_bindgen]
+pub fn render_frame_at_rgba(request_json: &str, frame_index: u32) -> Result<WasmFrame, JsValue> {
+    PANIC_HOOK.call_once(console_error_panic_hook::set_once);
+    let req: UiSimulationRequest =
+        serde_json::from_str(request_json).context("invalid simulation request json").map_err(as_js_err)?;
+    let db = ProfileDb::builtin().map_err(as_js_err)?;
+    let mut sim_req = map_ui_request(&req);
+    let background = resolve_background(&req).map_err(as_js_err)?;
+    let organism = db
+        .organism(&sim_req.organism_id)
+        .ok_or_else(|| as_js_err(anyhow!("unknown organism profile: {}", sim_req.organism_id)))?;
+    let illumination = db
+        .illumination(&sim_req.illumination_id)
+        .ok_or_else(|| as_js_err(anyhow!("unknown illumination profile: {}", sim_req.illumination_id)))?;
+
+    let step_seconds = sim_req.time.step_seconds.max(1);
+    let offset = step_seconds.saturating_mul(frame_index as u64);
+    sim_req.time.start_after_seconds = sim_req.time.start_after_seconds.saturating_add(offset);
+    sim_req.time.duration_seconds = 0;
+    sim_req.time.step_seconds = 1;
+
+    let engine = Engine::new(EngineConfig::default());
+    let mut iter = engine
+        .frame_iter(&sim_req, organism, illumination, &background)
+        .map_err(as_js_err)?;
+    let raw = iter
+        .next_raw()
+        .ok_or_else(|| JsValue::from_str("no frame produced"))?
+        .map_err(as_js_err)?;
+    let rgba = rgb_to_rgba(raw.rgb_bytes);
+    Ok(WasmFrame {
+        frame_index,
+        elapsed_seconds: raw.elapsed_seconds.min(u32::MAX as u64) as u32,
+        width: raw.width,
+        height: raw.height,
+        rgba,
+        done: false,
+    })
+}
+
+#[wasm_bindgen]
 pub fn drop_simulation(sim_id: u32) {
     STATE.with(|state| {
         state.borrow_mut().sims.remove(&sim_id);
@@ -158,12 +220,15 @@ pub fn reset_all_simulations() {
     });
 }
 
-fn map_ui_request(req: UiSimulationRequest) -> SimulationRequest {
+fn map_ui_request(req: &UiSimulationRequest) -> SimulationRequest {
+    let background_mode = match req.background_mode.as_deref() {
+        Some(raw) if raw.eq_ignore_ascii_case("blankfield") => BackgroundMode::Blankfield,
+        _ => BackgroundMode::PlateImage,
+    };
     SimulationRequest {
-        organism_id: req.organism,
-        illumination_id: req.illumination,
-        plate_profile_id: None,
-        background_mode: BackgroundMode::Blankfield,
+        organism_id: req.organism.clone(),
+        illumination_id: req.illumination.clone(),
+        background_mode,
         cfu: CfuSpec::Exact(req.cfu.max(1)),
         time: TimeSpec {
             start_after_seconds: 0,
@@ -184,6 +249,25 @@ fn map_ui_request(req: UiSimulationRequest) -> SimulationRequest {
     }
 }
 
+fn resolve_background(req: &UiSimulationRequest) -> Result<SimulationBackground> {
+    let is_blankfield = matches!(
+        req.background_mode.as_deref(),
+        Some(raw) if raw.eq_ignore_ascii_case("blankfield")
+    );
+    if is_blankfield {
+        return Ok(SimulationBackground::Blankfield);
+    }
+
+    let id = req
+        .plate_baseline_id
+        .as_deref()
+        .unwrap_or("petridish-top-1");
+    let asset = builtin_plate_baseline_by_id(id)
+        .ok_or_else(|| anyhow!("unknown plate baseline id: {id}"))?;
+    let baseline = asset.decode()?;
+    Ok(SimulationBackground::PlateBaseline(baseline))
+}
+
 fn rgb_to_rgba(rgb: &[u8]) -> Vec<u8> {
     let mut rgba = Vec::with_capacity(rgb.len() / 3 * 4);
     let mut i = 0usize;
@@ -195,31 +279,6 @@ fn rgb_to_rgba(rgb: &[u8]) -> Vec<u8> {
         i += 3;
     }
     rgba
-}
-
-fn embedded_profile_db() -> Result<ProfileDb> {
-    let organisms = [
-        include_str!("../../../profiles/organisms/solen.toml"),
-        include_str!("../../../profiles/organisms/morrow.toml"),
-        include_str!("../../../profiles/organisms/quill.toml"),
-        include_str!("../../../profiles/organisms/zenth.toml"),
-    ];
-    let illuminations = [
-        include_str!("../../../profiles/illumination/frontlit.toml"),
-        include_str!("../../../profiles/illumination/backlit.toml"),
-    ];
-
-    let mut db = ProfileDb::default();
-    for raw in organisms {
-        let p: OrganismProfile = toml::from_str(raw).context("invalid embedded organism profile")?;
-        db.organisms.insert(p.id.clone(), p);
-    }
-    for raw in illuminations {
-        let p: IlluminationProfile =
-            toml::from_str(raw).context("invalid embedded illumination profile")?;
-        db.illuminations.insert(p.id.clone(), p);
-    }
-    Ok(db)
 }
 
 fn as_js_err(err: anyhow::Error) -> JsValue {

@@ -4,12 +4,14 @@
   "type": "module",
   "scripts": {
     "build:wasm": "./scripts/build-wasm.sh",
+    "sync:ffmpeg-core": "./scripts/sync-ffmpeg-core.sh",
     "dev": "vite",
     "build": "bun run build:wasm && vite build",
     "preview": "vite preview",
     "test": "bun test"
   },
   "devDependencies": {
+    "@ffmpeg/core": "^0.12.6",
     "@ffmpeg/ffmpeg": "^0.12.15",
     "@ffmpeg/util": "^0.12.2",
     "@types/bun": "latest",

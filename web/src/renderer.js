@@ -48,11 +48,11 @@ export async function createRenderer() {
     kind: "mock",
     listOrganisms: () => null,
     listIlluminations: () => null,
+    listPlateBaselines: () => null,
     async render(ctx, canvas, state, timeline) {
       drawMockFrame(ctx, canvas, state, timeline.elapsedSeconds);
     },
-    async collectFrames(canvas, state, frameCount, onProgress) {
-      const frames = [];
+    async streamFrames(canvas, state, frameCount, onFrame, onProgress) {
       const stepSeconds = state.captureIntervalMinutes * 60;
       const scratch = document.createElement("canvas");
       scratch.width = canvas.width;
@@ -60,11 +60,11 @@ export async function createRenderer() {
       const sctx = scratch.getContext("2d");
       for (let i = 0; i < frameCount; i += 1) {
         drawMockFrame(sctx, scratch, state, i * stepSeconds);
-        const rgba = sctx.getImageData(0, 0, scratch.width, scratch.height).data;
-        frames.push(new Uint8Array(rgba));
+        const rgba = new Uint8Array(sctx.getImageData(0, 0, scratch.width, scratch.height).data);
+        await onFrame(rgba, i);
         if (onProgress) onProgress(i + 1, frameCount);
       }
-      return { width: scratch.width, height: scratch.height, frames };
+      return { width: scratch.width, height: scratch.height, frameCount };
     }
   };
 
@@ -77,12 +77,6 @@ export async function createRenderer() {
     await mod.default();
 
     let currentSimId = null;
-    let currentKey = "";
-    let cache = [];
-    let produced = 0;
-    let frameCount = 0;
-    let currentWidth = 0;
-    let currentHeight = 0;
 
     function requestForWasm(state, width, height) {
       return JSON.stringify({
@@ -93,28 +87,11 @@ export async function createRenderer() {
         grow_time_hours: state.growTimeHours,
         seed: state.seed,
         cfu: state.cfu,
+        background_mode: "plate_image",
+        plate_baseline_id: state.plateBaselineId,
         width,
         height
       });
-    }
-
-    function resetSimulation(state, width, height) {
-      if (currentSimId !== null && typeof mod.drop_simulation === "function") {
-        mod.drop_simulation(currentSimId);
-      }
-      currentSimId = mod.create_simulation(requestForWasm(state, width, height));
-      currentKey = stateKey(state);
-      currentWidth = width;
-      currentHeight = height;
-      produced = 0;
-      frameCount = Number(mod.simulation_frame_count(currentSimId));
-      cache = new Array(frameCount);
-    }
-
-    function ensureSimulation(state, width, height) {
-      const key = stateKey(state);
-      const needsReset = key !== currentKey || currentSimId === null || width !== currentWidth || height !== currentHeight;
-      if (needsReset) resetSimulation(state, width, height);
     }
 
     return {
@@ -127,45 +104,46 @@ export async function createRenderer() {
         if (typeof mod.list_illuminations !== "function") return null;
         return JSON.parse(mod.list_illuminations());
       },
+      listPlateBaselines() {
+        if (typeof mod.list_plate_baselines !== "function") return null;
+        return JSON.parse(mod.list_plate_baselines());
+      },
       async render(ctx, canvas, state, timeline) {
         if (
-          typeof mod.create_simulation !== "function" ||
-          typeof mod.next_frame_rgba !== "function" ||
-          typeof mod.simulation_frame_count !== "function"
+          typeof mod.render_frame_at_rgba !== "function"
         ) {
           drawMockFrame(ctx, canvas, state, timeline.elapsedSeconds);
           return;
         }
-
-        const targetIndex = timeline.currentIndex;
-        ensureSimulation(state, canvas.width, canvas.height);
-
-        while (produced <= targetIndex && produced < frameCount) {
-          const frame = mod.next_frame_rgba(currentSimId, produced);
-          if (frame.done) break;
-          cache[produced] = frame.rgba;
-          produced += 1;
-        }
-
-        const rgba = cache[targetIndex];
+        const frame = mod.render_frame_at_rgba(
+          requestForWasm(state, canvas.width, canvas.height),
+          timeline.currentIndex
+        );
+        const rgba = frame?.rgba;
         if (rgba && rgba.length > 0) {
           putRgbaOnCanvas(ctx, canvas, rgba);
           return;
         }
         drawMockFrame(ctx, canvas, state, timeline.elapsedSeconds);
       },
-      async collectFrames(canvas, state, requestedFrameCount, onProgress) {
-        ensureSimulation(state, canvas.width, canvas.height);
-        const total = Math.min(requestedFrameCount, frameCount);
-        while (produced < total) {
-          const frame = mod.next_frame_rgba(currentSimId, produced);
-          if (frame.done) break;
-          cache[produced] = frame.rgba;
-          produced += 1;
-          if (onProgress) onProgress(produced, total);
+      async streamFrames(canvas, state, requestedFrameCount, onFrame, onProgress) {
+        if (
+          typeof mod.create_simulation !== "function" ||
+          typeof mod.next_frame_rgba !== "function"
+        ) {
+          return mockRenderer.streamFrames(canvas, state, requestedFrameCount, onFrame, onProgress);
         }
-        const frames = cache.slice(0, total).filter((f) => f && f.length > 0);
-        return { width: canvas.width, height: canvas.height, frames };
+        if (currentSimId !== null && typeof mod.drop_simulation === "function") {
+          mod.drop_simulation(currentSimId);
+        }
+        currentSimId = mod.create_simulation(requestForWasm(state, canvas.width, canvas.height));
+        for (let i = 0; i < requestedFrameCount; i += 1) {
+          const frame = mod.next_frame_rgba(currentSimId, i);
+          if (frame.done) break;
+          await onFrame(frame.rgba, i);
+          if (onProgress) onProgress(i + 1, requestedFrameCount);
+        }
+        return { width: canvas.width, height: canvas.height, frameCount: requestedFrameCount };
       }
     };
   } catch {

@@ -1,103 +1,164 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Synthris Wasm Explorer</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap"
-      rel="stylesheet"
-    />
-    <link rel="stylesheet" href="./src/style.css" />
-  </head>
-  <body>
-    <main class="layout">
-      <section class="panel controls">
-        <h1>Synthris Explorer</h1>
-        <form id="controls-form">
-          <label>
-            <span>Organism</span>
-            <select id="organism">
-              <option value="solen">solen</option>
-              <option value="morrow">morrow</option>
-              <option value="quill">quill</option>
-              <option value="zenth">zenth</option>
-            </select>
-          </label>
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Synthris Wasm Explorer</title>
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+        <link
+            href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap"
+            rel="stylesheet"
+        />
+        <link rel="stylesheet" href="./src/style.css" />
+    </head>
+    <body>
+        <main class="layout">
+            <section class="panel controls">
+                <h1>Synthris Explorer</h1>
+                <form id="controls-form">
+                    <label>
+                        <span>Organism</span>
+                        <select id="organism">
+                            <option value="solen">solen</option>
+                            <option value="morrow">morrow</option>
+                            <option value="quill">quill</option>
+                            <option value="zenth">zenth</option>
+                        </select>
+                    </label>
 
-          <label>
-            <span>Illumination</span>
-            <select id="illumination">
-              <option value="frontlit">frontlit</option>
-              <option value="backlit">backlit</option>
-            </select>
-          </label>
+                    <label>
+                        <span>Illumination</span>
+                        <select id="illumination">
+                            <option value="frontlit">frontlit</option>
+                            <option value="backlit">backlit</option>
+                        </select>
+                    </label>
 
-          <label>
-            <span>Temperature (C)</span>
-            <input id="temperature" type="number" min="10" max="60" step="0.1" value="37" />
-          </label>
+                    <label>
+                        <span>Plate Baseline</span>
+                        <select id="plate-baseline">
+                            <option value="petridish-top-1">
+                                petridish-top-1
+                            </option>
+                        </select>
+                    </label>
 
-          <label>
-            <span>Capture Interval (minutes)</span>
-            <input id="capture-interval-min" type="number" min="1" step="1" value="30" />
-          </label>
+                    <label>
+                        <span>Temperature (C)</span>
+                        <input
+                            id="temperature"
+                            type="number"
+                            min="10"
+                            max="60"
+                            step="0.1"
+                            value="37"
+                        />
+                    </label>
 
-          <label>
-            <span>Grow Time (hours)</span>
-            <input id="grow-time-hours" type="number" min="1" step="1" value="24" />
-          </label>
+                    <label>
+                        <span>Capture Interval (minutes)</span>
+                        <input
+                            id="capture-interval-min"
+                            type="number"
+                            min="1"
+                            step="1"
+                            value="60"
+                        />
+                    </label>
 
-          <label>
-            <span>Seed</span>
-            <div class="seed-row">
-              <input id="seed" type="number" min="0" step="1" value="42" />
-              <button id="seed-randomize" type="button">Random</button>
-            </div>
-          </label>
+                    <label>
+                        <span>Grow Time (hours)</span>
+                        <input
+                            id="grow-time-hours"
+                            type="number"
+                            min="1"
+                            step="1"
+                            value="168"
+                        />
+                    </label>
 
-          <label>
-            <span>CFU</span>
-            <input id="cfu" type="number" min="1" step="1" value="400" />
-          </label>
-        </form>
-      </section>
+                    <label>
+                        <span>Seed</span>
+                        <div class="seed-row">
+                            <input
+                                id="seed"
+                                type="number"
+                                min="0"
+                                step="1"
+                                value="42"
+                            />
+                            <button id="seed-randomize" type="button">
+                                Random
+                            </button>
+                        </div>
+                    </label>
 
-      <section class="panel preview">
-        <h2>Preview</h2>
-        <canvas id="frame-canvas" width="512" height="512"></canvas>
-        <div class="preview-actions">
-          <button id="render-frame" type="button">Render Frame</button>
-          <button id="toggle-play" type="button">Play</button>
-          <button id="export-video" type="button">Export Video</button>
-        </div>
-        <div class="engine-status" id="engine-status">Engine: mock renderer</div>
+                    <label>
+                        <span>CFU</span>
+                        <input
+                            id="cfu"
+                            type="number"
+                            min="1"
+                            step="1"
+                            value="40"
+                        />
+                    </label>
+                </form>
+            </section>
 
-        <label class="scrubber">
-          <span>Preview Time</span>
-          <input id="preview-time" type="range" min="0" max="0" value="0" />
-          <div class="time-readout" id="preview-time-readout">t = 0h 0m</div>
-        </label>
+            <section class="panel preview">
+                <h2>Preview</h2>
+                <canvas id="frame-canvas" width="512" height="512"></canvas>
+                <div class="preview-actions">
+                    <button id="toggle-play" type="button">Play</button>
+                    <button id="export-video" type="button">
+                        Export Video
+                    </button>
+                    <span
+                        id="busy-indicator"
+                        class="busy hidden"
+                        aria-live="polite"
+                    >
+                        <span class="spinner"></span>
+                        <span id="busy-text">Working</span>
+                    </span>
+                </div>
+                <div class="engine-status" id="engine-status">
+                    Engine: mock renderer
+                </div>
 
-        <dl class="stats">
-          <div>
-            <dt>Frames</dt>
-            <dd id="frame-count">0</dd>
-          </div>
-          <div>
-            <dt>Video Length @ 12 fps</dt>
-            <dd id="video-length">0.0s</dd>
-          </div>
-          <div>
-            <dt>Config Snapshot</dt>
-            <dd id="config-snapshot">-</dd>
-          </div>
-        </dl>
-      </section>
-    </main>
+                <label class="scrubber">
+                    <span>Preview Time</span>
+                    <input
+                        id="preview-time"
+                        type="range"
+                        min="0"
+                        max="0"
+                        value="0"
+                    />
+                    <div class="time-readout" id="preview-time-readout">
+                        t = 0h 0m
+                    </div>
+                </label>
 
-    <script type="module" src="./src/main.js"></script>
-  </body>
+                <dl class="stats">
+                    <div>
+                        <dt>Frames</dt>
+                        <dd id="frame-count">0</dd>
+                    </div>
+                    <div>
+                        <dt>Video Length @ 12 fps</dt>
+                        <dd id="video-length">0.0s</dd>
+                    </div>
+                    <div>
+                        <dt>Config Snapshot</dt>
+                        <dd id="config-snapshot">-</dd>
+                    </div>
+                </dl>
+            </section>
+        </main>
+
+        <script type="module" src="./src/main.js"></script>
+    </body>
 </html>

@@ -2302,7 +2302,7 @@ dependencies = [
  "serde",
  "serde_json",
  "synthris-core",
- "toml",
+ "synthris-plate-assets",
  "wasm-bindgen",
 ]
 

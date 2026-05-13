@@ -25,14 +25,15 @@ export function formatPreviewTime(seconds) {
 
 export function normalizeState(inputs) {
   const temperatureC = clampNumber(parseFloatSafe(inputs.temperature, 37), 10, 60);
-  const captureIntervalMinutes = Math.max(1, parseIntSafe(inputs.captureIntervalMinutes, 30));
-  const growTimeHours = Math.max(1, parseIntSafe(inputs.growTimeHours, 24));
+  const captureIntervalMinutes = Math.max(1, parseIntSafe(inputs.captureIntervalMinutes, 60));
+  const growTimeHours = Math.max(1, parseIntSafe(inputs.growTimeHours, 168));
   const seed = Math.max(0, parseIntSafe(inputs.seed, 42));
   const cfu = Math.max(1, parseIntSafe(inputs.cfu, 400));
 
   return {
     organism: inputs.organism,
     illumination: inputs.illumination,
+    plateBaselineId: inputs.plateBaselineId || "petridish-top-1",
     temperatureC,
     captureIntervalMinutes,
     growTimeHours,
