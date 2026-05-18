@@ -1,45 +1,20 @@
 # Synthris
 
-Synthetic bacterial colony image generation for RIS testing.
+Synthetic bacterial colony image generation. Produces images that match Reshape Biotech's camera stack.
 
 ## Features
 
 - Synthetic plate image generation with growth over time
-- RIS agent that polls jobs and uploads generated captures
-- Job-name overrides for CFU, organism, seed, and pacing
 - Rust CLI for local generation, perf baselines, and profiling
-- Fly.io deployment support
 
 ## Toolchain (mise)
 
 ```bash
+mise trust
 mise install
-mise ls
-rustc --version
-cargo --version
-flyctl version
 ```
 
-## Environment
-
-```bash
-cp crates/synthris-ris-agent/.env.example .env
-```
-
-Required for agent runtime:
-
-- `RIS_API_BASE_URL`
-- `RIS_API_KEY`
-- `RISFW_VERSION`
-- `RISHW_VERSION`
-
-Optional:
-
-- `POLL_INTERVAL_SECONDS` (default `2.0`)
-- `DEFAULT_TEMPERATURE_C` (default `22.0`)
-- `DEFAULT_SCALE_FACTOR` (default `1.0`, clamped to `0.05..=1.0`)
-
-## Quickstart
+## Quickstart (CLI)
 
 ```bash
 # Generate images locally
@@ -62,17 +37,6 @@ Common flags:
 - `--duration`, `--step`, `--start-after`, `--temperature-c`
 - `--seed`, `--width`, `--height`, `--profile-dir`
 
-## RIS Agent
-
-Run:
-
-```bash
-cargo run -p synthris-ris-agent
-```
-
-Job-name parameter docs (canonical):
-
-- `crates/synthris-ris-agent/README.md`
 
 ## Workspace Commands
 
@@ -97,11 +61,4 @@ cargo run -p synthris-cli -- perf profile \
   --plate-profile petri-default \
   --cfu 150 \
   --profile-out target/perf
-```
-
-## Deployment
-
-```bash
-flyctl deploy -c crates/synthris-ris-agent/fly.staging.toml --dockerfile crates/synthris-ris-agent/Dockerfile
-flyctl deploy -c crates/synthris-ris-agent/fly.prod.toml --dockerfile crates/synthris-ris-agent/Dockerfile
 ```

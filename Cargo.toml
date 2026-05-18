@@ -3,7 +3,6 @@ members = [
     "crates/synthris-core",
     "crates/synthris-plate-assets",
     "crates/synthris-cli",
-    "crates/synthris-ris-agent",
 ]
 resolver = "2"
 
